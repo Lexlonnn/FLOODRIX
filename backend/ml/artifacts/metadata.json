@@ -1,0 +1,48 @@
+{
+  "model_name": "FLOODRIX Calibrated Flood Hazard Predictor",
+  "version": "1.0.0",
+  "created_at": "2026-10-07T07:58:34.258880+00:00",
+  "frameworks": {
+    "xgboost_version": "3.4.1",
+    "scikit_learn_version": "1.9.1",
+    "python_version": "3.11+"
+  },
+  "features": {
+    "feature_order": [
+      "latitude",
+      "longitude",
+      "rainfall_1h",
+      "rainfall_6h",
+      "rainfall_24h",
+      "elevation",
+      "historical_flood_frequency",
+      "rain_intensity_ratio",
+      "rain_6h_share",
+      "rain_x_freq",
+      "low_elev_rain",
+      "flood_zone_encoded"
+    ],
+    "num_features": 12,
+    "flood_zone_mapping": {
+      "low": 0,
+      "med": 1,
+      "medium": 1,
+      "high": 2,
+      "extreme": 3,
+      "very_high": 3
+    }
+  },
+  "risk_bands": {
+    "low": "< 0.3",
+    "medium": "0.3 - 0.6",
+    "high": "> 0.6"
+  },
+  "calibration_note": "Calibrated probabilities represent empirical flood occurrence frequency conditional on environmental indicators. Road closure and logistics rerouting decisions are governed by downstream risk engine constraints.",
+  "test_metrics": {
+    "pr_auc": 0.7871,
+    "roc_auc": 0.8234,
+    "brier_score": 0.1698,
+    "log_loss": 0.5756,
+    "expected_calibration_error": 0.0272
+  }
+}
