@@ -29,7 +29,39 @@ class OsrmService {
           final double duration = (route['duration'] as num).toDouble();
           final List coords = route['geometry']['coordinates'];
           List<LatLng> geometry = coords.map((c) => LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble())).toList();
-          results.add(RouteResult(distance: distance, duration: duration, geometry: geometry));
+          List<RouteStep> parsedSteps = [];
+          if (route['legs'] != null && route['legs'].isNotEmpty) {
+            final leg = route['legs'][0];
+            if (leg['steps'] != null) {
+              for (var step in leg['steps']) {
+                final maneuver = step['maneuver'] ?? {};
+                final locationCoords = maneuver['location'];
+                LatLng stepLoc = LatLng(0,0);
+                if (locationCoords != null && locationCoords.length == 2) {
+                  stepLoc = LatLng((locationCoords[1] as num).toDouble(), (locationCoords[0] as num).toDouble());
+                }
+                
+                String type = maneuver['type'] ?? '';
+                String modifier = maneuver['modifier'] ?? '';
+                String name = step['name'] ?? '';
+                double stepDist = (step['distance'] as num).toDouble();
+                
+                String instruction = type;
+                if (modifier.isNotEmpty) instruction += ' $modifier';
+                if (name.isNotEmpty) instruction += ' onto $name';
+                if (instruction.trim().isEmpty) instruction = 'Continue';
+                
+                parsedSteps.add(RouteStep(
+                  distance: stepDist,
+                  instruction: instruction,
+                  type: type,
+                  modifier: modifier,
+                  location: stepLoc
+                ));
+              }
+            }
+          }
+          results.add(RouteResult(distance: distance, duration: duration, geometry: geometry, steps: parsedSteps));
         }
         return results;
       }

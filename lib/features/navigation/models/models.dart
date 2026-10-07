@@ -16,12 +16,23 @@ class PlaceResult {
   }
 }
 
+class RouteStep {
+  final double distance;
+  final String instruction;
+  final String type;
+  final String modifier;
+  final LatLng location;
+  
+  RouteStep({required this.distance, required this.instruction, required this.type, required this.modifier, required this.location});
+}
+
 class RouteResult {
   final double distance; // in meters
   final double duration; // in seconds
   final List<LatLng> geometry;
+  final List<RouteStep> steps;
 
-  RouteResult({required this.distance, required this.duration, required this.geometry});
+  RouteResult({required this.distance, required this.duration, required this.geometry, this.steps = const []});
 }
 
 enum NavState { idle, planning, routeFound, journeyActive, journeyCompleted, error }
