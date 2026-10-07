@@ -40,6 +40,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
 
   List<RouteResult> _routes = [];
   int _selectedRouteIndex = 0;
+  int _currentStepIndex = 0;
 
   StreamSubscription<Position>? _gpsSubscription;
   StreamSubscription<CompassEvent>? _compassSubscription;
@@ -153,6 +154,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
     setState(() {
       _state = NavState.journeyActive;
       _autoTracking = true;
+      _currentStepIndex = 0;
     });
     
     if (_currentLocation != null) {
@@ -171,8 +173,16 @@ class _NavigationScreenState extends State<NavigationScreen> {
         
         if (_autoTracking) {
           _mapController.move(loc, _mapController.camera.zoom);
-          // Optional: Rotate map to heading
-          // _mapController.rotate(_currentHeading);
+        }
+        
+        if (_routes.isNotEmpty) {
+          final r = _routes[_selectedRouteIndex];
+          if (_currentStepIndex < r.steps.length) {
+            final distToStep = const Distance().as(LengthUnit.Meter, loc, r.steps[_currentStepIndex].location);
+            if (distToStep < 30 && _currentStepIndex < r.steps.length - 1) {
+              _currentStepIndex++;
+            }
+          }
         }
         
         if (_destinationPlace != null) {
@@ -353,8 +363,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
               ),
             ),
             
-          // Active Journey Header (Google Maps Style)
-          if (_state == NavState.journeyActive)
+          // Active Journey Header (Dynamic Style)
+          if (_state == NavState.journeyActive && _routes.isNotEmpty && _routes[_selectedRouteIndex].steps.isNotEmpty)
             SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(12.0),
@@ -365,42 +375,43 @@ class _NavigationScreenState extends State<NavigationScreen> {
                       width: double.infinity,
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF0F5132), // Dark green typical of navigation
+                        color: const Color(0xFF0F5132), 
                         borderRadius: BorderRadius.circular(16), 
                         boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10)]
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.turn_left, color: Colors.white, size: 48),
+                          Icon(_getTurnIcon(_routes[_selectedRouteIndex].steps[_currentStepIndex].modifier), color: Colors.white, size: 48),
                           const SizedBox(width: 16),
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
-                              children: const [
-                                Text('80 m', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 24)),
-                                Text('Turn left', style: TextStyle(color: Colors.white, fontSize: 20)),
+                              children: [
+                                Text(_formatDistance(_routes[_selectedRouteIndex].steps[_currentStepIndex].distance), style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 24)),
+                                Text(_routes[_selectedRouteIndex].steps[_currentStepIndex].instruction, style: const TextStyle(color: Colors.white, fontSize: 18), maxLines: 2, overflow: TextOverflow.ellipsis),
                               ],
                             ),
                           ),
                         ],
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF0F5132),
-                        borderRadius: BorderRadius.circular(8),
-                        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)]
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: const [
-                          Text('Then ', style: TextStyle(color: Colors.white, fontSize: 16)),
-                          Icon(Icons.turn_left, color: Colors.white, size: 20),
-                        ],
-                      ),
-                    )
+                    if (_currentStepIndex + 1 < _routes[_selectedRouteIndex].steps.length)
+                      Container(
+                        margin: const EdgeInsets.only(top: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0F5132),
+                          borderRadius: BorderRadius.circular(8),
+                          boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)]
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Text('Then ', style: TextStyle(color: Colors.white, fontSize: 16)),
+                            Icon(_getTurnIcon(_routes[_selectedRouteIndex].steps[_currentStepIndex+1].modifier), color: Colors.white, size: 20),
+                          ],
+                        ),
+                      )
                   ],
                 ),
               ),
@@ -424,7 +435,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text(
-                      _currentSpeed > 0 ? (_currentSpeed * 3.6).toStringAsFixed(0) : '--',
+                      _currentSpeed > 0 ? (_currentSpeed * 3.6).toStringAsFixed(0) : '0',
                       style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
                     ),
                     const Text('km/h', style: TextStyle(fontSize: 10, color: Colors.grey)),
@@ -499,33 +510,6 @@ class _NavigationScreenState extends State<NavigationScreen> {
               ),
             ),
             
-          // Report Button
-          if (_state == NavState.journeyActive)
-            Positioned(
-              right: 16,
-              bottom: 120,
-              child: GestureDetector(
-                onTap: () {
-                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Hazard reported successfully!")));
-                },
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(24),
-                    boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 8)]
-                  ),
-                  child: Row(
-                    children: [
-                      Icon(Icons.warning_amber_rounded, color: Colors.orange.shade700),
-                      const SizedBox(width: 8),
-                      const Text('Report', style: TextStyle(fontWeight: FontWeight.bold)),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-
           // Bottom Panels
           Align(
             alignment: Alignment.bottomCenter,
@@ -534,6 +518,23 @@ class _NavigationScreenState extends State<NavigationScreen> {
         ],
       ),
     );
+  }
+
+  IconData _getTurnIcon(String modifier) {
+    switch (modifier.toLowerCase()) {
+      case 'left':
+      case 'sharp left':
+      case 'slight left':
+        return Icons.turn_left;
+      case 'right':
+      case 'sharp right':
+      case 'slight right':
+        return Icons.turn_right;
+      case 'uturn':
+        return Icons.u_turn_left;
+      default:
+        return Icons.straight;
+    }
   }
 
   Widget _buildMapFab(IconData icon, VoidCallback onTap) {
@@ -788,15 +789,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
                   ),
                 ],
               ),
-              Container(
-                width: 52,
-                height: 52,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  border: Border.all(color: Colors.grey.shade300, width: 2),
-                ),
-                child: const Icon(Icons.auto_awesome, color: Colors.blueAccent, size: 24),
-              ),
+              const SizedBox(width: 52), // Padding to balance the X button
             ],
           ),
         ),
