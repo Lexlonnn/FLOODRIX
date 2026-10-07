@@ -8,6 +8,7 @@ from api.v1.dashboard import router as dashboard_router
 from api.v1.health import router as health_router
 from api.v1.map_risk import router as map_risk_router
 from api.v1.prediction import router as prediction_router
+from api.v1.route import router as route_router
 from api.v1.routes import router as routes_router
 from api.v1.simulation import router as simulation_router
 from api.v1.trips import router as trips_router
@@ -17,6 +18,7 @@ from api.v1.weather import router as weather_router
 api_v1_router = APIRouter()
 api_v1_router.include_router(health_router)
 api_v1_router.include_router(prediction_router)
+api_v1_router.include_router(route_router)
 api_v1_router.include_router(routes_router)
 api_v1_router.include_router(weather_router)
 api_v1_router.include_router(map_risk_router)
@@ -34,6 +36,7 @@ __all__ = [
     "health_router",
     "map_risk_router",
     "prediction_router",
+    "route_router",
     "routes_router",
     "simulation_router",
     "trips_router",

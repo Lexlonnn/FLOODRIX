@@ -109,8 +109,14 @@ def tune_xgboost_optuna(
 
 def train_pipeline(
     n_optuna_trials: int = 15,
+    feature_set: str = "full",
 ) -> Tuple[xgb.XGBClassifier, Pipeline, Dict[str, Any]]:
     """Execute complete model training workflow: ingestion, split, baseline, tuning, XGBoost fit."""
+    from ml.config import (
+        LIVE_RAW_MODEL_FILE,
+        MODEL_FEATURE_COLUMNS_LIVE,
+    )
+
     # 1. Ingestion / fallback creation
     if not RAW_DATA_FILE.exists():
         print(f"No raw data found at {RAW_DATA_FILE}. Generating synthetic dataset...")
@@ -128,21 +134,23 @@ def train_pipeline(
     test_df.to_parquet(RAW_DATA_FILE.parent.parent / "processed" / "test.parquet")
 
     # 3. Feature building
-    X_train, y_train = build_features(train_df, return_target=True)
-    X_cal, y_cal = build_features(cal_df, return_target=True)
-    X_test, y_test = build_features(test_df, return_target=True)
+    X_train, y_train = build_features(train_df, return_target=True, feature_set=feature_set)
+    X_cal, y_cal = build_features(cal_df, return_target=True, feature_set=feature_set)
+    X_test, y_test = build_features(test_df, return_target=True, feature_set=feature_set)
 
     class_stats = calculate_class_balance(y_train)
     scale_pos_weight = class_stats["scale_pos_weight"]
-    print(f"Train Class stats: {class_stats}")
+    print(f"Train Class stats ({feature_set}): {class_stats}")
 
     # 4. Train Baseline Logistic Regression
     baseline_model = train_baseline_model(X_train, y_train, X_cal, y_cal)
-    joblib.dump(baseline_model, BASELINE_MODEL_FILE)
-    print(f"Saved baseline model to {BASELINE_MODEL_FILE}")
+    if feature_set == "full":
+        joblib.dump(baseline_model, BASELINE_MODEL_FILE)
+        print(f"Saved baseline model to {BASELINE_MODEL_FILE}")
 
     # 5. Monotone constraints
-    monotone_constraints = build_monotone_constraints_tuple(MODEL_FEATURE_COLUMNS)
+    feature_cols = MODEL_FEATURE_COLUMNS_LIVE if feature_set == "live" else MODEL_FEATURE_COLUMNS
+    monotone_constraints = build_monotone_constraints_tuple(feature_cols)
 
     # 6. Optuna hyperparameter tuning
     groups_train = train_df["group_id"]
@@ -178,13 +186,15 @@ def train_pipeline(
     cal_raw_probs = raw_model.predict_proba(X_cal)[:, 1]
     raw_cal_pr_auc = average_precision_score(y_cal, cal_raw_probs)
     raw_cal_roc_auc = roc_auc_score(y_cal, cal_raw_probs)
-    print(f"--- Raw XGBoost Model (Pre-Calibration) ---")
+    print(f"--- Raw XGBoost Model ({feature_set}, Pre-Calibration) ---")
     print(f"Calibration set PR-AUC: {raw_cal_pr_auc:.4f} | ROC-AUC: {raw_cal_roc_auc:.4f}")
 
-    joblib.dump(raw_model, RAW_MODEL_FILE)
-    print(f"Saved raw XGBoost model to {RAW_MODEL_FILE}")
+    raw_model_out = LIVE_RAW_MODEL_FILE if feature_set == "live" else RAW_MODEL_FILE
+    joblib.dump(raw_model, raw_model_out)
+    print(f"Saved raw XGBoost model to {raw_model_out}")
 
     return raw_model, baseline_model, {
+        "feature_set": feature_set,
         "class_stats": class_stats,
         "best_params": best_params,
         "raw_cal_pr_auc": float(raw_cal_pr_auc),
@@ -193,4 +203,17 @@ def train_pipeline(
 
 
 if __name__ == "__main__":
-    train_pipeline()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Train Flood Risk ML Model")
+    parser.add_argument(
+        "--feature-set",
+        type=str,
+        choices=["full", "live"],
+        default="full",
+        help="Feature set to train on: 'full' (all features) or 'live' (no history/static hazard features)",
+    )
+    parser.add_argument("--trials", type=int, default=15, help="Number of Optuna tuning trials")
+    args = parser.parse_args()
+
+    train_pipeline(n_optuna_trials=args.trials, feature_set=args.feature_set)

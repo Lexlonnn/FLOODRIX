@@ -26,6 +26,12 @@ METADATA_FILE: Path = ARTIFACTS_DIR / "metadata.json"
 METRICS_FILE: Path = ARTIFACTS_DIR / "metrics.json"
 PLOTS_DIR: Path = ARTIFACTS_DIR / "plots"
 
+# Live Model Artifacts (no history features)
+LIVE_MODEL_FILE: Path = ARTIFACTS_DIR / "model_live.joblib"
+LIVE_RAW_MODEL_FILE: Path = ARTIFACTS_DIR / "model_live_raw.joblib"
+LIVE_METADATA_FILE: Path = ARTIFACTS_DIR / "metadata_live.json"
+LIVE_METRICS_FILE: Path = ARTIFACTS_DIR / "metrics_live.json"
+
 # Ensure runtime directories exist
 for path in [DATA_RAW_DIR, DATA_PROCESSED_DIR, ARTIFACTS_DIR, PLOTS_DIR]:
     path.mkdir(parents=True, exist_ok=True)
@@ -85,7 +91,7 @@ ENGINEERED_FEATURE_COLUMNS: List[str] = [
     "flood_zone_encoded",
 ]
 
-# Final ordered features fed to the ML estimator
+# Final ordered features fed to the ML estimator (Full Model)
 MODEL_FEATURE_COLUMNS: List[str] = [
     "latitude",
     "longitude",
@@ -115,6 +121,31 @@ MONOTONE_CONSTRAINTS: Dict[str, int] = {
     "rain_x_freq": 1,
     "low_elev_rain": 1,
     "flood_zone_encoded": 1,
+}
+
+# Live features (drops historical_flood_frequency, flood_zone, rain_x_freq)
+MODEL_FEATURE_COLUMNS_LIVE: List[str] = [
+    "latitude",
+    "longitude",
+    "rainfall_1h",
+    "rainfall_6h",
+    "rainfall_24h",
+    "elevation",
+    "rain_intensity_ratio",
+    "rain_6h_share",
+    "low_elev_rain",
+]
+
+MONOTONE_CONSTRAINTS_LIVE: Dict[str, int] = {
+    "latitude": 0,
+    "longitude": 0,
+    "rainfall_1h": 1,
+    "rainfall_6h": 1,
+    "rainfall_24h": 1,
+    "elevation": -1,
+    "rain_intensity_ratio": 1,
+    "rain_6h_share": 1,
+    "low_elev_rain": 1,
 }
 
 # Random seed

@@ -15,6 +15,7 @@ from api.v1 import (
     health_router as health,
     map_risk_router as map_risk,
     prediction_router as predict,
+    route_router as route,
     routes_router as routes,
     simulation_router as simulation,
     trips_router as trips,
@@ -89,13 +90,15 @@ async def latency_logging_middleware(request: Request, call_next):
     return response
 
 
-# 3. Mount Direct Root Endpoints (as defined in model-plan.md)
+# 3. Mount Direct Root Endpoints (as defined in model-plan.md and risk_engine_plan.md)
 app.include_router(health.router)
 app.include_router(predict.router)
+app.include_router(route.router)
 
 # 4. Mount /api/v1 Prefix (as defined in FLOODRIX Mobile API Specification)
 app.include_router(health.router, prefix="/api/v1")
 app.include_router(predict.router, prefix="/api/v1")
+app.include_router(route.router, prefix="/api/v1")
 app.include_router(routes.router, prefix="/api/v1")
 app.include_router(weather.router, prefix="/api/v1")
 app.include_router(map_risk.router, prefix="/api/v1")

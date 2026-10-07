@@ -30,19 +30,27 @@ def get_calibrated_classifier(estimator: Any, method: str = "isotonic") -> Calib
         return CalibratedClassifierCV(estimator=estimator, method=method, cv="prefit")
 
 
-def calibrate_model() -> Tuple[CalibratedClassifierCV, Dict[str, Any]]:
+def calibrate_model(feature_set: str = "full") -> Tuple[CalibratedClassifierCV, Dict[str, Any]]:
     """Calibrate the raw XGBoost model using the held-out spatial calibration split."""
+    from ml.config import (
+        LIVE_MODEL_FILE,
+        LIVE_RAW_MODEL_FILE,
+    )
+
     cal_path = RAW_DATA_FILE.parent.parent / "processed" / "cal.parquet"
     if not cal_path.exists():
         raise FileNotFoundError(f"Calibration data not found at {cal_path}. Run ml.train first.")
 
-    if not RAW_MODEL_FILE.exists():
-        raise FileNotFoundError(f"Raw model not found at {RAW_MODEL_FILE}. Run ml.train first.")
+    raw_model_path = LIVE_RAW_MODEL_FILE if feature_set == "live" else RAW_MODEL_FILE
+    model_out_path = LIVE_MODEL_FILE if feature_set == "live" else MODEL_FILE
+
+    if not raw_model_path.exists():
+        raise FileNotFoundError(f"Raw model not found at {raw_model_path}. Run ml.train first.")
 
     cal_df = pd.read_parquet(cal_path)
-    X_cal, y_cal = build_features(cal_df, return_target=True)
+    X_cal, y_cal = build_features(cal_df, return_target=True, feature_set=feature_set)
 
-    raw_model = joblib.load(RAW_MODEL_FILE)
+    raw_model = joblib.load(raw_model_path)
 
     # Raw uncalibrated probabilities and scores
     raw_probs = raw_model.predict_proba(X_cal)[:, 1]
@@ -52,7 +60,7 @@ def calibrate_model() -> Tuple[CalibratedClassifierCV, Dict[str, Any]]:
     num_pos = int((y_cal == 1).sum())
     total_cal = len(y_cal)
 
-    print(f"=== Model Calibration ===")
+    print(f"=== Model Calibration ({feature_set}) ===")
     print(f"Calibration split size: {total_cal} samples ({num_pos} positives, {num_pos/total_cal:.1%} positive rate)")
     print(f"Raw Model -> Brier Score: {raw_brier:.4f} | Log Loss: {raw_logloss:.4f}")
 
@@ -74,8 +82,6 @@ def calibrate_model() -> Tuple[CalibratedClassifierCV, Dict[str, Any]]:
     print(f"Sigmoid   -> Brier Score: {sig_brier:.4f} | Log Loss: {sig_logloss:.4f}")
 
     # Selection policy:
-    # Rule of thumb: If calibration set has >= 100 positives and isotonic Brier score <= sigmoid Brier score,
-    # use isotonic. Otherwise use sigmoid to avoid overfitting step-functions on small positive samples.
     if num_pos >= 100 and iso_brier <= (sig_brier + 0.005):
         selected_method = "isotonic"
         best_model = iso_cal
@@ -90,10 +96,11 @@ def calibrate_model() -> Tuple[CalibratedClassifierCV, Dict[str, Any]]:
     print(f"Selected Calibration Method: '{selected_method.upper()}' (Brier: {best_brier:.4f})")
 
     # Save calibrated model artifact
-    joblib.dump(best_model, MODEL_FILE)
-    print(f"Saved calibrated model to {MODEL_FILE}")
+    joblib.dump(best_model, model_out_path)
+    print(f"Saved calibrated model to {model_out_path}")
 
     info = {
+        "feature_set": feature_set,
         "calibration_method": selected_method,
         "calibration_samples": total_cal,
         "calibration_positives": num_pos,
@@ -109,4 +116,16 @@ def calibrate_model() -> Tuple[CalibratedClassifierCV, Dict[str, Any]]:
 
 
 if __name__ == "__main__":
-    calibrate_model()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Calibrate Flood Risk Model")
+    parser.add_argument(
+        "--feature-set",
+        type=str,
+        choices=["full", "live"],
+        default="full",
+        help="Feature set: 'full' or 'live'",
+    )
+    args = parser.parse_args()
+
+    calibrate_model(feature_set=args.feature_set)
