@@ -115,20 +115,23 @@ def encode_flood_zone(zone_series: pd.Series) -> pd.Series:
 def build_features(
     data: Union[pd.DataFrame, List[Dict[str, Any]], Dict[str, Any]],
     return_target: bool = False,
+    feature_set: str = "full",
 ) -> Union[pd.DataFrame, Tuple[pd.DataFrame, pd.Series]]:
     """Deterministically engineer features for both training and real-time inference.
 
     Features generated:
     1. rain_intensity_ratio = rainfall_1h / (rainfall_24h + eps)
     2. rain_6h_share        = rainfall_6h / (rainfall_24h + eps)
-    3. rain_x_freq          = rainfall_24h * historical_flood_frequency
+    3. rain_x_freq          = rainfall_24h * historical_flood_frequency (full mode only)
     4. low_elev_rain        = rainfall_24h / (max(elevation, 0.0) + 1.0)
-    5. flood_zone_encoded   = ordinal integer map (low: 0, med: 1, high: 2, extreme: 3)
+    5. flood_zone_encoded   = ordinal integer map (full mode only)
 
-    Returns:
-    - X: DataFrame containing MODEL_FEATURE_COLUMNS in exact specified order.
-    - y: (Optional) Series containing target if return_target is True.
+    feature_set:
+    - 'full': uses all features including history & static zone (MODEL_FEATURE_COLUMNS)
+    - 'live': drops historical_flood_frequency, flood_zone, and rain_x_freq (MODEL_FEATURE_COLUMNS_LIVE)
     """
+    from ml.config import MODEL_FEATURE_COLUMNS_LIVE
+
     eps = 1e-5
 
     if isinstance(data, dict):
@@ -144,7 +147,7 @@ def build_features(
     df.columns = [c.strip().lower() for c in df.columns]
 
     # Convert numeric fields
-    for col in ["latitude", "longitude", "rainfall_1h", "rainfall_6h", "rainfall_24h", "elevation", "historical_flood_frequency"]:
+    for col in ["latitude", "longitude", "rainfall_1h", "rainfall_6h", "rainfall_24h", "elevation"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0.0)
 
@@ -154,26 +157,35 @@ def build_features(
     # 2. 6h rainfall share
     df["rain_6h_share"] = df["rainfall_6h"] / (df["rainfall_24h"] + eps)
 
-    # 3. Rainfall x Historical flood frequency interaction
-    df["rain_x_freq"] = df["rainfall_24h"] * df["historical_flood_frequency"]
-
-    # 4. Low elevation rainfall vulnerability
+    # 3. Low elevation rainfall vulnerability
     effective_elevation = np.maximum(df["elevation"].values, 0.0)
     df["low_elev_rain"] = df["rainfall_24h"] / (effective_elevation + 1.0)
 
-    # 5. Flood zone ordinal encoding
-    if "flood_zone" in df.columns:
-        df["flood_zone_encoded"] = encode_flood_zone(df["flood_zone"])
+    if feature_set == "live":
+        target_columns = MODEL_FEATURE_COLUMNS_LIVE
     else:
-        df["flood_zone_encoded"] = 0
+        target_columns = MODEL_FEATURE_COLUMNS
+        if "historical_flood_frequency" in df.columns:
+            df["historical_flood_frequency"] = pd.to_numeric(df["historical_flood_frequency"], errors="coerce").fillna(0.0)
+        else:
+            df["historical_flood_frequency"] = 0.0
+
+        # Rainfall x Historical flood frequency interaction
+        df["rain_x_freq"] = df["rainfall_24h"] * df["historical_flood_frequency"]
+
+        # Flood zone ordinal encoding
+        if "flood_zone" in df.columns:
+            df["flood_zone_encoded"] = encode_flood_zone(df["flood_zone"])
+        else:
+            df["flood_zone_encoded"] = 0
 
     # Ensure all target model features exist
-    for col in MODEL_FEATURE_COLUMNS:
+    for col in target_columns:
         if col not in df.columns:
-            raise KeyError(f"Feature '{col}' missing after feature engineering.")
+            raise KeyError(f"Feature '{col}' missing after feature engineering for feature_set='{feature_set}'.")
 
     # Reorder columns strictly
-    X = df[MODEL_FEATURE_COLUMNS].copy()
+    X = df[target_columns].copy()
 
     if return_target:
         if TARGET_COLUMN not in df.columns:
