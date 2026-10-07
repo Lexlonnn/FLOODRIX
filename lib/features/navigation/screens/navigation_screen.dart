@@ -11,6 +11,8 @@ import '../models/models.dart';
 import '../widgets/widgets.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_compass/flutter_compass.dart';
+import '../../../core/network/dio_client.dart';
+import '../../../core/config/env.dart';
 
 class NavigationScreen extends StatefulWidget {
   const NavigationScreen({Key? key}) : super(key: key);
@@ -46,6 +48,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
   StreamSubscription<CompassEvent>? _compassSubscription;
   bool _autoTracking = true;
   bool _isMuted = false;
+
+  List<CircleMarker> _floodZones = [];
 
   @override
   void initState() {
@@ -125,13 +129,36 @@ class _NavigationScreenState extends State<NavigationScreen> {
     
     setState(() => _state = NavState.planning);
     try {
-      final routes = await _osrmService.getRoute(origin, _destinationPlace!.location);
-      if (routes.isEmpty) throw Exception('No route found');
+      final rawRoutes = await _osrmService.getRoute(origin, _destinationPlace!.location);
+      if (rawRoutes.isEmpty) throw Exception('No route found');
       
-      routes.sort((a, b) => a.duration.compareTo(b.duration));
+      final evaluatedRoutes = await _osrmService.evaluateRoutesRisk(rawRoutes);
+      
+      // Fetch flood overlays around destination
+      try {
+        final res = await DioClient.instance.get('${Env.apiBaseUrl}/api/v1/map/risk?min_lat=${origin.latitude - 0.5}&max_lat=${_destinationPlace!.location.latitude + 0.5}&min_lon=${origin.longitude - 0.5}&max_lon=${_destinationPlace!.location.longitude + 0.5}');
+        if (res.data != null && res.data['segments'] != null) {
+          final List<dynamic> segments = res.data['segments'];
+          setState(() {
+            _floodZones = segments.map((s) {
+              final prob = s['flood_probability'] as double;
+              return CircleMarker(
+                point: LatLng(s['latitude'], s['longitude']),
+                color: prob > 0.6 ? Colors.red.withOpacity(0.4) : (prob > 0.3 ? Colors.orange.withOpacity(0.4) : Colors.yellow.withOpacity(0.4)),
+                borderColor: prob > 0.6 ? Colors.red : Colors.orange,
+                borderStrokeWidth: 2,
+                useRadiusInMeter: true,
+                radius: 1000, // 1 km radius
+              );
+            }).toList();
+          });
+        }
+      } catch (e) {
+        print("Failed to fetch map risk: $e");
+      }
       
       setState(() {
-        _routes = routes;
+        _routes = evaluatedRoutes;
         _selectedRouteIndex = 0;
         _state = NavState.routeFound;
       });
@@ -207,6 +234,7 @@ class _NavigationScreenState extends State<NavigationScreen> {
     setState(() {
       _state = NavState.idle;
       _routes = [];
+      _floodZones = [];
       _destinationPlace = null;
       _originPlace = null;
       _mapController.rotate(0);
@@ -271,6 +299,8 @@ class _NavigationScreenState extends State<NavigationScreen> {
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.example.floodrix',
               ),
+              if (_floodZones.isNotEmpty)
+                CircleLayer(circles: _floodZones),
               if (_routes.isNotEmpty)
                 PolylineLayer(
                   polylines: _routes.asMap().entries.map((entry) {
@@ -692,6 +722,22 @@ class _NavigationScreenState extends State<NavigationScreen> {
                                     color: Colors.grey.shade600
                                   )
                                 ),
+                                  Container(
+                                    margin: const EdgeInsets.only(top: 4),
+                                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: route.riskScore > 0.6 ? Colors.red.shade100 : (route.riskScore > 0.3 ? Colors.orange.shade100 : Colors.green.shade100),
+                                      borderRadius: BorderRadius.circular(4)
+                                    ),
+                                    child: Text(
+                                      'Risk: ${(route.riskScore * 100).toStringAsFixed(0)}%',
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                        color: route.riskScore > 0.6 ? Colors.red.shade700 : (route.riskScore > 0.3 ? Colors.orange.shade700 : Colors.green.shade700)
+                                      ),
+                                    ),
+                                  ),
                               ],
                             ),
                           ),
@@ -715,6 +761,23 @@ class _NavigationScreenState extends State<NavigationScreen> {
                           Text(_formatDistance(_routes[_selectedRouteIndex].distance), 
                             style: TextStyle(fontSize: 16, color: Colors.grey.shade600, fontWeight: FontWeight.w500)
                           ),
+                            Padding(
+                              padding: const EdgeInsets.only(top: 6),
+                              child: Row(
+                                children: [
+                                  Icon(Icons.warning_amber_rounded, size: 16, color: _routes[_selectedRouteIndex].riskScore > 0.6 ? Colors.red.shade700 : (_routes[_selectedRouteIndex].riskScore > 0.3 ? Colors.orange.shade700 : Colors.green.shade700)),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    'Flood Risk: ${(_routes[_selectedRouteIndex].riskScore * 100).toStringAsFixed(0)}% (${_routes[_selectedRouteIndex].riskDecision})',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
+                                      color: _routes[_selectedRouteIndex].riskScore > 0.6 ? Colors.red.shade700 : (_routes[_selectedRouteIndex].riskScore > 0.3 ? Colors.orange.shade700 : Colors.green.shade700)
+                                    )
+                                  ),
+                                ],
+                              ),
+                            ),
                         ],
                       ),
                     ),
@@ -784,8 +847,31 @@ class _NavigationScreenState extends State<NavigationScreen> {
                     ],
                   ),
                   const SizedBox(height: 4),
-                  Text('${_formatDistance(r.distance)} • ${_formatETA(r.duration)}', 
-                    style: TextStyle(color: Colors.grey.shade600, fontSize: 16, fontWeight: FontWeight.w500)
+                  Row(
+                    children: [
+                      Text('${_formatDistance(r.distance)} • ${_formatETA(r.duration)}', 
+                        style: TextStyle(color: Colors.grey.shade600, fontSize: 16, fontWeight: FontWeight.w500)
+                      ),
+                      if (r.riskScore > 0)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 8.0),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: r.riskScore > 0.6 ? Colors.red.shade100 : (r.riskScore > 0.3 ? Colors.orange.shade100 : Colors.green.shade100),
+                              borderRadius: BorderRadius.circular(4)
+                            ),
+                            child: Text(
+                              'Risk: ${(r.riskScore * 100).toStringAsFixed(0)}% (${r.riskDecision})',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: r.riskScore > 0.6 ? Colors.red.shade700 : (r.riskScore > 0.3 ? Colors.orange.shade700 : Colors.green.shade700)
+                              ),
+                            )
+                          ),
+                        )
+                    ],
                   ),
                 ],
               ),

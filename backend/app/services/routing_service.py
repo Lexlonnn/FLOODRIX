@@ -9,6 +9,8 @@ from app.schemas import (
     LatLng,
     PlanRouteRequest,
     PlanRouteResponse,
+    EvaluateRoutesRequest,
+    RouteCandidate,
     RiskLevelEnum,
     RouteOption,
     SegmentInput,
@@ -172,6 +174,94 @@ class RoutingService:
 
         recommended = sorted_routes[0]
         # Mark as recommended
+        recommended.is_recommended = True
+        alternatives = sorted_routes[1:]
+
+        return PlanRouteResponse(
+            recommended_route=recommended,
+            alternative_routes=alternatives,
+            plan_timestamp=datetime.now(timezone.utc).isoformat(),
+        )
+
+    def evaluate_routes(self, request: EvaluateRoutesRequest) -> PlanRouteResponse:
+        """Evaluate explicitly provided route geometries."""
+        import logging
+        logger = logging.getLogger("floodrix.backend.routing")
+        logger.info(f"🚀 Received {len(request.routes)} routes from Frontend for evaluation.")
+
+        cargo_penalty = {
+            "MEDICINE": 0.12,
+            "PERISHABLE": 0.08,
+            "HAZMAT": 0.15,
+            "GENERAL": 0.0,
+        }.get((request.cargo_type or "").upper(), 0.0)
+
+        evaluated_options: List[RouteOption] = []
+
+        for idx, candidate in enumerate(request.routes):
+            # Sample max 15 waypoints to avoid overloading model
+            wps = candidate.waypoints
+            if len(wps) > 15:
+                step = len(wps) // 15
+                wps = wps[::step][:15]
+
+            segments = self._assemble_route_segments(wps, candidate.route_id)
+            preds, _ = self.predictor.predict_segments(segments)
+
+            probs = [p.flood_probability for p in preds]
+            max_prob = max(probs) if probs else 0.0
+            clipped = np.clip(probs, 0.0, 0.9999)
+            raw_route_risk = 1.0 - float(np.exp(np.sum(np.log(1.0 - clipped))))
+
+            effective_risk = min(raw_route_risk + cargo_penalty, 1.0)
+            high_risk_count = sum(1 for p in probs if p > RISK_HIGH_THRESHOLD)
+
+            has_closure = False
+            closure_warning = None
+            for seg in segments:
+                closure = self.closure_service.is_near_closure(seg.latitude, seg.longitude)
+                if closure:
+                    has_closure = True
+                    closure_warning = f"Active Road Closure on segment: {closure.road_name} ({closure.reason})"
+                    break
+
+            if has_closure or max_prob > RISK_HIGH_THRESHOLD or high_risk_count >= 2:
+                decision = DecisionActionEnum.REROUTE
+            elif effective_risk > (request.max_acceptable_risk or 0.40):
+                decision = DecisionActionEnum.WAIT
+            else:
+                decision = DecisionActionEnum.GO
+
+            evaluated_options.append(
+                RouteOption(
+                    route_id=candidate.route_id,
+                    label=f"Route Option {idx + 1}",
+                    distance_km=candidate.distance_km,
+                    eta_minutes=candidate.eta_minutes,
+                    route_risk=round(effective_risk, 4),
+                    max_segment_risk=round(max_prob, 4),
+                    decision=decision,
+                    is_recommended=False,
+                    high_risk_segments=high_risk_count,
+                    warning_message=closure_warning,
+                    waypoints=candidate.waypoints,
+                )
+            )
+            logger.info(f"📊 Evaluated Route {candidate.route_id}: Risk={effective_risk:.4f}, Decision={decision.name}")
+
+        if not evaluated_options:
+            raise ValueError("No routes were evaluated")
+
+        sorted_routes = sorted(
+            evaluated_options,
+            key=lambda r: (
+                0 if r.decision == DecisionActionEnum.GO else (1 if r.decision == DecisionActionEnum.WAIT else 2),
+                r.route_risk,
+                r.eta_minutes,
+            )
+        )
+
+        recommended = sorted_routes[0]
         recommended.is_recommended = True
         alternatives = sorted_routes[1:]
 

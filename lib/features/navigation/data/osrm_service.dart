@@ -61,13 +61,83 @@ class OsrmService {
               }
             }
           }
-          results.add(RouteResult(distance: distance, duration: duration, geometry: geometry, steps: parsedSteps));
+          results.add(RouteResult(
+            id: 'osrm_${results.length + 1}',
+            distance: distance, 
+            duration: duration, 
+            geometry: geometry, 
+            steps: parsedSteps
+          ));
         }
         return results;
       }
       throw Exception('No routes found');
     } catch (e) {
       throw Exception('Unable to calculate route: $e');
+    }
+  }
+
+  Future<List<RouteResult>> evaluateRoutesRisk(List<RouteResult> routes) async {
+    try {
+      final payload = {
+        "routes": routes.map((r) => {
+          "route_id": r.id,
+          "distance_km": r.distance / 1000.0,
+          "eta_minutes": r.duration / 60.0,
+          "waypoints": r.geometry.map((ll) => {"latitude": ll.latitude, "longitude": ll.longitude}).toList(),
+        }).toList(),
+        "cargo_type": "GENERAL"
+      };
+
+      print('🚀 [OsrmService] Sending ${routes.length} routes to Backend for Risk Evaluation...');
+      print('🚀 [OsrmService] API Endpoint: ${Env.apiBaseUrl}/api/v1/routes/evaluate');
+
+      final response = await DioClient.instance.post(
+        '${Env.apiBaseUrl}/api/v1/routes/evaluate',
+        data: payload
+      );
+
+      print('✅ [OsrmService] Received Response from Backend (Status: ${response.statusCode})');
+
+      final data = response.data;
+      if (data != null && data['recommended_route'] != null) {
+        print('✅ [OsrmService] Backend selected Recommended Route: ${data['recommended_route']['route_id']} with Risk: ${data['recommended_route']['route_risk']}');
+        // Map risks back to RouteResult
+        Map<String, dynamic> riskData = {};
+        
+        final rec = data['recommended_route'];
+        riskData[rec['route_id']] = rec;
+        
+        for (var alt in data['alternative_routes'] ?? []) {
+          riskData[alt['route_id']] = alt;
+        }
+
+        List<RouteResult> evaluatedRoutes = [];
+        for (var r in routes) {
+          if (riskData.containsKey(r.id)) {
+            final rd = riskData[r.id];
+            evaluatedRoutes.add(RouteResult(
+              id: r.id,
+              distance: r.distance,
+              duration: r.duration,
+              geometry: r.geometry,
+              steps: r.steps,
+              riskScore: (rd['route_risk'] as num).toDouble(),
+              riskDecision: rd['decision'] as String,
+            ));
+          } else {
+            evaluatedRoutes.add(r);
+          }
+        }
+
+        // Sort by risk
+        evaluatedRoutes.sort((a, b) => a.riskScore.compareTo(b.riskScore));
+        return evaluatedRoutes;
+      }
+      return routes;
+    } catch (e) {
+      print('Warning: Failed to evaluate routes with backend: $e');
+      return routes; // Fallback to raw routes if backend fails
     }
   }
 }

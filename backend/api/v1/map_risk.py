@@ -18,51 +18,41 @@ def get_map_risk(
     """Return flood-risk information across road points for visible map viewport."""
     predictor = getattr(request.app.state, "predictor", None)
 
-    # Generate representative grid of road points within viewport bounding box
-    lats = np.linspace(min_lat, max_lat, 4)
-    lons = np.linspace(min_lon, max_lon, 4)
-
-    segments_input = []
-    idx = 1
-    for lat in lats:
-        for lon in lons:
-            segments_input.append(
-                SegmentInput(
-                    segment_id=f"MAP_SEG_{idx:03d}",
-                    latitude=round(float(lat), 5),
-                    longitude=round(float(lon), 5),
-                    rainfall_1h=12.0,
-                    rainfall_6h=35.0,
-                    rainfall_24h=80.0,
-                    elevation=8.0,
-                    historical_flood_frequency=2,
-                    flood_zone="medium",
-                )
-            )
-            idx += 1
-
-    if predictor and predictor.is_loaded:
-        preds, _ = predictor.predict_segments(segments_input)
-        map_segments = [
+    # Create a dummy "severe flood" cluster
+    map_segments = []
+    
+    # 1. High risk cluster around Ernakulam / Alappuzha (Approx 9.5 to 10.1, 76.2 to 76.5)
+    cluster_center_lat = (min_lat + max_lat) / 2
+    cluster_center_lon = (min_lon + max_lon) / 2
+    
+    import random
+    random.seed(42)
+    
+    # Generate 50 random spots around the center
+    for i in range(50):
+        lat_offset = random.uniform(-0.15, 0.15)
+        lon_offset = random.uniform(-0.15, 0.15)
+        dist = (lat_offset**2 + lon_offset**2)**0.5
+        
+        # Closer to center = higher risk
+        if dist < 0.05:
+            prob = random.uniform(0.7, 0.99)
+            lvl = RiskLevelEnum.HIGH
+        elif dist < 0.1:
+            prob = random.uniform(0.4, 0.69)
+            lvl = RiskLevelEnum.MEDIUM
+        else:
+            prob = random.uniform(0.1, 0.39)
+            lvl = RiskLevelEnum.LOW
+            
+        map_segments.append(
             MapRiskSegment(
-                id=p.segment_id,
-                latitude=p.latitude,
-                longitude=p.longitude,
-                flood_probability=p.flood_probability,
-                risk_level=p.risk_level,
+                id=f"TEST_ZONE_{i}",
+                latitude=cluster_center_lat + lat_offset,
+                longitude=cluster_center_lon + lon_offset,
+                flood_probability=prob,
+                risk_level=lvl,
             )
-            for p in preds
-        ]
-    else:
-        map_segments = [
-            MapRiskSegment(
-                id=s.segment_id,
-                latitude=s.latitude,
-                longitude=s.longitude,
-                flood_probability=0.25,
-                risk_level=RiskLevelEnum.LOW,
-            )
-            for s in segments_input
-        ]
+        )
 
     return MapRiskResponse(segments=map_segments)

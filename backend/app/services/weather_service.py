@@ -2,68 +2,94 @@
 
 from datetime import datetime, timezone
 from typing import Dict, List
-import numpy as np
+import requests
 
 from app.schemas import HourlyForecastItem, WeatherCurrentResponse, WeatherForecastResponse
-
 
 class WeatherService:
     """Provides current and short-term forecast rainfall data for road segments."""
 
     @staticmethod
     def get_current_weather(latitude: float, longitude: float) -> WeatherCurrentResponse:
-        """Estimate or fetch current rainfall conditions for a coordinate."""
-        # Realistic monsoon spatial variation based on latitude & proximity to coast/highlands
-        np.random.seed(int((latitude * 1000 + longitude * 100) % 10000))
-        
-        # Base rainfall in mm
-        r24 = float(np.random.uniform(10.0, 110.0))
-        r6 = float(r24 * np.random.uniform(0.35, 0.75))
-        r1 = float(r6 * np.random.uniform(0.20, 0.60))
+        """Fetch current rainfall conditions from Open-Meteo."""
+        try:
+            url = f"https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&current=temperature_2m,precipitation,weather_code&hourly=precipitation&past_days=1"
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+            
+            temp = data.get("current", {}).get("temperature_2m", 28.0)
+            r1 = data.get("current", {}).get("precipitation", 0.0)
+            
+            # calculate past 24h and 6h rainfall
+            hourly_precip = data.get("hourly", {}).get("precipitation", [])
+            r24 = sum(hourly_precip[-24:]) if len(hourly_precip) >= 24 else r1 * 24
+            r6 = sum(hourly_precip[-6:]) if len(hourly_precip) >= 6 else r1 * 6
 
-        temp = float(28.0 - (latitude - 8.5) * 0.4 + np.random.uniform(-1.5, 1.5))
-        condition = "Heavy Monsoon Rain" if r1 > 15.0 else ("Moderate Rain" if r1 > 5.0 else "Overcast")
+            condition = "Heavy Monsoon Rain" if r1 > 5.0 else ("Moderate Rain" if r1 > 1.0 else "Clear/Overcast")
 
-        return WeatherCurrentResponse(
-            latitude=latitude,
-            longitude=longitude,
-            rainfall_1h=round(r1, 2),
-            rainfall_6h=round(r6, 2),
-            rainfall_24h=round(r24, 2),
-            temperature_c=round(temp, 1),
-            condition=condition,
-        )
+            return WeatherCurrentResponse(
+                latitude=latitude,
+                longitude=longitude,
+                rainfall_1h=round(float(r1), 2),
+                rainfall_6h=round(float(r6), 2),
+                rainfall_24h=round(float(r24), 2),
+                temperature_c=round(float(temp), 1),
+                condition=condition,
+            )
+        except Exception as e:
+            # Fallback
+            return WeatherCurrentResponse(
+                latitude=latitude, longitude=longitude,
+                rainfall_1h=0.0, rainfall_6h=0.0, rainfall_24h=0.0,
+                temperature_c=28.0, condition="Unknown"
+            )
 
     @staticmethod
     def get_forecast(latitude: float, longitude: float) -> WeatherForecastResponse:
         """Return future hourly rainfall forecast."""
-        np.random.seed(int((latitude * 500 + longitude * 300) % 10000))
-        base_h = datetime.now(timezone.utc).hour
+        try:
+            url = f"https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&hourly=precipitation&forecast_days=2"
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+            data = response.json()
+            
+            hourly_times = data.get("hourly", {}).get("time", [])
+            hourly_precip = data.get("hourly", {}).get("precipitation", [])
+            
+            now_iso = datetime.now(timezone.utc).isoformat()
+            
+            forecast_items: List[HourlyForecastItem] = []
+            
+            # Find closest future time
+            started = False
+            count = 0
+            for t, p in zip(hourly_times, hourly_precip):
+                if t > now_iso or started:
+                    started = True
+                    dt = datetime.fromisoformat(t)
+                    rain = float(p)
+                    
+                    if rain > 10.0:
+                        risk = "HIGH"
+                    elif rain > 2.0:
+                        risk = "MODERATE"
+                    else:
+                        risk = "LOW"
+                        
+                    forecast_items.append(HourlyForecastItem(
+                        time=f"{dt.hour:02d}:00",
+                        rainfall=round(rain, 1),
+                        risk_indicator=risk
+                    ))
+                    count += 1
+                    if count >= 6:
+                        break
 
-        forecast_items: List[HourlyForecastItem] = []
-        for i in range(1, 7):
-            hour = (base_h + i) % 24
-            time_str = f"{hour:02d}:00"
-            rain = float(np.random.exponential(scale=12.0))
-            rain = round(min(rain, 80.0), 1)
-
-            if rain > 25.0:
-                risk_indicator = "HIGH"
-            elif rain > 10.0:
-                risk_indicator = "MODERATE"
-            else:
-                risk_indicator = "LOW"
-
-            forecast_items.append(
-                HourlyForecastItem(
-                    time=time_str,
-                    rainfall=rain,
-                    risk_indicator=risk_indicator,
-                )
+            return WeatherForecastResponse(
+                latitude=latitude,
+                longitude=longitude,
+                forecast=forecast_items,
             )
-
-        return WeatherForecastResponse(
-            latitude=latitude,
-            longitude=longitude,
-            forecast=forecast_items,
-        )
+        except Exception:
+            return WeatherForecastResponse(latitude=latitude, longitude=longitude, forecast=[])

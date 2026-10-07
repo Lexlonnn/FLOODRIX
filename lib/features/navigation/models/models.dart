@@ -27,12 +27,23 @@ class RouteStep {
 }
 
 class RouteResult {
+  final String id;
   final double distance; // in meters
   final double duration; // in seconds
   final List<LatLng> geometry;
   final List<RouteStep> steps;
+  final double riskScore;
+  final String riskDecision;
 
-  RouteResult({required this.distance, required this.duration, required this.geometry, this.steps = const []});
+  RouteResult({
+    required this.id,
+    required this.distance, 
+    required this.duration, 
+    required this.geometry, 
+    this.steps = const [],
+    this.riskScore = 0.0,
+    this.riskDecision = 'GO'
+  });
 }
 
 enum NavState { idle, planning, routeFound, journeyActive, journeyCompleted, error }

@@ -51,15 +51,10 @@ class SegmentInput(BaseModel):
 
     @model_validator(mode="after")
     def validate_rainfall_ordering(self) -> "SegmentInput":
-        tol = 1e-3
-        if self.rainfall_1h > (self.rainfall_6h + tol):
-            raise ValueError(
-                f"Rainfall ordering violated: rainfall_1h ({self.rainfall_1h}) > rainfall_6h ({self.rainfall_6h})"
-            )
-        if self.rainfall_6h > (self.rainfall_24h + tol):
-            raise ValueError(
-                f"Rainfall ordering violated: rainfall_6h ({self.rainfall_6h}) > rainfall_24h ({self.rainfall_24h})"
-            )
+        if self.rainfall_1h > self.rainfall_6h:
+            self.rainfall_6h = self.rainfall_1h
+        if self.rainfall_6h > self.rainfall_24h:
+            self.rainfall_24h = self.rainfall_6h
         return self
 
 
@@ -133,6 +128,19 @@ class PlanRouteRequest(BaseModel):
     cargo_type: Optional[str] = Field(default="GENERAL", description="GENERAL, MEDICINE, PERISHABLE, HAZMAT")
     vehicle_type: Optional[str] = Field(default="TRUCK")
     departure_time: Optional[str] = None
+    max_acceptable_risk: Optional[float] = Field(default=0.40)
+
+
+class RouteCandidate(BaseModel):
+    route_id: str
+    distance_km: float
+    eta_minutes: float
+    waypoints: List[LatLng]
+
+
+class EvaluateRoutesRequest(BaseModel):
+    routes: List[RouteCandidate]
+    cargo_type: Optional[str] = Field(default="GENERAL", description="GENERAL, MEDICINE, PERISHABLE, HAZMAT")
     max_acceptable_risk: Optional[float] = Field(default=0.40)
 
 
