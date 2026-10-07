@@ -1,0 +1,26 @@
+"""FLOODRIX API v1 - Logistics route planning endpoint."""
+
+from fastapi import APIRouter, HTTPException, Request, status
+from app.schemas import PlanRouteRequest, PlanRouteResponse
+from app.services.routing_service import RoutingService
+
+router = APIRouter(prefix="/routes", tags=["Route Planning"])
+
+
+@router.post("/plan", response_model=PlanRouteResponse)
+def plan_route(payload: PlanRouteRequest, request: Request) -> PlanRouteResponse:
+    """
+    Plan shipment and select safest practical route considering predicted flood risk.
+    Evaluates candidate routes, calculates ETA, checks closures, and selects safest option.
+    """
+    predictor = getattr(request.app.state, "predictor", None)
+    closure_service = getattr(request.app.state, "closure_service", None)
+
+    if not predictor or not predictor.is_loaded:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Predictor model is not loaded.",
+        )
+
+    routing_svc = RoutingService(predictor, closure_service)
+    return routing_svc.plan_shipment(payload)

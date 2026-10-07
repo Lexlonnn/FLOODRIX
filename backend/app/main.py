@@ -8,16 +8,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.predictor import FloodPredictor
-from app.routers import (
-    alerts,
-    closures,
-    health,
-    map_risk,
-    predict,
-    routes,
-    simulation,
-    trips,
-    weather,
+from api.v1 import (
+    alerts_router as alerts,
+    closures_router as closures,
+    dashboard_router as dashboard,
+    health_router as health,
+    map_risk_router as map_risk,
+    prediction_router as predict,
+    routes_router as routes,
+    simulation_router as simulation,
+    trips_router as trips,
+    weather_router as weather,
 )
 from app.services.closure_service import ClosureService
 from ml.config import METADATA_FILE, MODEL_FILE
@@ -102,6 +103,7 @@ app.include_router(closures.router, prefix="/api/v1")
 app.include_router(trips.router, prefix="/api/v1")
 app.include_router(alerts.router, prefix="/api/v1")
 app.include_router(simulation.router, prefix="/api/v1")
+app.include_router(dashboard.router, prefix="/api/v1")
 
 
 @app.get("/")
